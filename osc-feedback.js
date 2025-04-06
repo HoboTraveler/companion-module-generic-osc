@@ -35,60 +35,54 @@ async function parseOscMessages(root, buffer) {
 }
 
 async function onDataHandler(root, data) {
-    try {
-        let buffer = Buffer.alloc(0);
-        buffer = Buffer.concat([buffer, data]);
-        root.log('trace', `Buffer length: ${buffer.length}`);
+	try {
+		let buffer = Buffer.alloc(0);
+		buffer = Buffer.concat([buffer, data]);
+		root.log('trace', `Buffer length: ${buffer.length}`);
 
-        // Parse the OSC messages
-        const { remainingBuffer, packets } = await parseOscMessages(root, buffer);
-        buffer = remainingBuffer;
+		// Parse the OSC messages
+		const { remainingBuffer, packets } = await parseOscMessages(root, buffer);
+		buffer = remainingBuffer;
 
-        root.log('debug', `Raw: ${JSON.stringify(data)}`);
+		root.log('debug', `Raw: ${JSON.stringify(data)}`);
 
-        // Handle the parsed packets
-        for (const packet of packets) {
-            if (packet.address) {
-                root.onDataReceived[packet.address] = packet.args;
-                const args_json = JSON.stringify(packet.args);
-                const args_string = packet.args.map(item => item.value).join(" ");
+		const processPacket = async (packet) => {
+			if (packet.address && Array.isArray(packet.args)) {
+				const path = packet.address;
+				const args = packet.args;
 
-                root.log('debug', `OSC message: ${packet.address}, args: ${args_json}`);
+				root.onDataReceived[path] = args;
 
-                await root.checkFeedbacks();
+				const args_string = args.map(item => item.value).join(' ');
+				root.log('debug', `OSC message: ${path}, args: ${JSON.stringify(args)}`);
 
-                //Update Variables
-                root.setVariableValues({
-                    'latest_received_raw': `${packet.address} ${args_string}`,
-                    'latest_received_path': packet.address,
-                    'latest_received_args': packet.args.length ? packet.args.map(arg => arg.value) : undefined,
-                    'latest_received_timestamp': Date.now()
-                });
+				await root.checkFeedbacks();
 
-            } else if (packet.packets) {
-                for (const element of packet.packets) {
-                    if (element.address) {
-                        root.onDataReceived[element.address] = element.args;
-                        root.log('debug', `Bundle element message: ${element.address}, args: ${JSON.stringify(element.args)}`);
-                        
-                        await root.checkFeedbacks();
+				root.setVariableValues({
+					latest_received_raw: `${path} ${args_string}`,
+					latest_received_path: path,
+					latest_received_args: args.length ? args.map(arg => arg.value) : undefined,
+					latest_received_timestamp: Date.now(),
+				});
+			}
+		};
 
-                        //Update Variables
-                        root.setVariableValues({
-                            'latest_received_raw': `${element.address} ${element.args}`,
-                            'latest_received_path': element.address,
-                            'latest_received_args': element.args.length ? element.args.map(arg => arg.value) : undefined,
-                            'latest_received_timestamp': Date.now()
-                        });
-                    }
-                }
-            }
-        }
+		for (const packet of packets) {
+			if (packet.packets) {
+				// It's a bundle
+				for (const element of packet.packets) {
+					await processPacket(element);
+				}
+			} else {
+				// Single message
+				await processPacket(packet);
+			}
+		}
 
-        root.log('trace', `Remaining buffer length: ${buffer.length}`);
-    } catch (err) {
-        root.log('error', `Error handling incoming data: ${err.message}`);
-    }
+		root.log('trace', `Remaining buffer length: ${buffer.length}`);
+	} catch (err) {
+		root.log('error', `Error handling incoming data: ${err.message}`);
+	}
 }
 
 module.exports = { onDataHandler };
